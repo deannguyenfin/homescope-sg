@@ -1,4 +1,4 @@
-# HomeScope SG — Architecture
+# HomeScope SG Architecture
 
 ## 1. Architecture Canvas (3 layers)
 
