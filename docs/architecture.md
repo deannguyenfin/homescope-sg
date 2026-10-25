@@ -2,18 +2,26 @@
 
 ## 1. Architecture Canvas (3 layers)
 
+![HomeScope SG Architecture Canvas](architecture-canvas.png)
+
+Text version:
+
 ```
 ┌──────────────────────────── End-user ────────────────────────────┐
 │  HomeScope  (Reactive Web app "HomeScope")                       │
-│  Screens: Dashboard · Explore · Towns · Affordability · Admin    │
+│  Screens: Dashboard · Explore · Towns · Fair Price ·             │
+│           Affordability · Admin                                  │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │ public read-only entities, server actions
 ┌──────────────────────────── Core ────────────────────────────────┐
 │  Resale_CS   (app "HomeScope Services")                          │
-│  Entities: ResaleTransaction, Town, FlatType, SyncRun, SyncStatus│
+│  Entities: ResaleTransaction, Town, FlatType, SyncRun,           │
+│            SyncStatus, ModelAccuracy                             │
 │  Logic: SyncResale + SyncResaleTimer, TriggerSync,               │
 │         RequestFullRefresh, GetMarketKpis, GetPriceTrend,        │
 │         GetTownStats, CalculateAffordability                     │
+│  Valuation: EstimateFairPrice, BacktestFairPrice,                │
+│             ComputeValuationBacktest + ValuationBacktestTimer    │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │ GetResalePage(Offset, Limit)
 ┌──────────────────────────── Foundation ──────────────────────────┐
@@ -40,6 +48,7 @@ Rules applied:
 | `Town` / `FlatType` | Normalised reference data, created automatically during sync | unique `Name` |
 | `SyncRun` | Audit row per sync: trigger, offsets, pages, fetched/inserted/updated, source total, error | – |
 | `SyncStatus` (static) | Running · Succeeded · Failed | – |
+| `ModelAccuracy` | One row per nightly back-test of the valuation model: samples, median absolute error %, share within 5% / 10% | `IX_ModelAccuracy_ComputedOn` |
 
 Price per sqm and min/max storey are computed during ingestion, so analytics queries never parse strings.
 
@@ -79,6 +88,7 @@ Design choices:
 | Dashboard (default) | Market at a glance | Filters (town, flat type, period); KPI cards (transactions, median/avg price, price per sqm); price trend line chart; volume by flat type bar chart |
 | Explore | Transaction-level exploration | Search (street/block), town, flat type, price range; server-side sort (`OnSort` → dynamic ORDER BY) and pagination (20/page) |
 | Towns | Compare towns | Bar chart of median price by town; sortable stats table; flat-type filter |
+| Fair Price | "Is this asking price fair, and what should I offer?" | Town, flat type, area, storey, lease, asking price → verdict banner (below / fair / above / overpriced), fair value and P25–P75 range, confidence, negotiation plan (opening offer, walk-away, COV, 6-month momentum), the 10 most similar sales with match %, back-test accuracy |
 | Affordability | "Can I afford it?" | Price, down payment, interest, tenure, income → monthly instalment (annuity formula), MSR check against 30% |
 | Admin (RegisteredRole) | Operations | Sync now, Full refresh, SyncRun history, record counts |
 
@@ -87,6 +97,29 @@ UX choices:
 - Each screen fetches data through **server aggregates and data actions**, so only the current page or the aggregates reach the browser, never the 243k rows.
 - Filters refresh their data sources on change. Empty states are shown before the first sync.
 - The screens use the OutSystems UI responsive layout, with a hamburger menu on mobile.
+
+## 4a. Decision support: Fair Price Check (BI / ML)
+
+The other screens describe the market. Fair Price turns the same data into a decision for one specific flat.
+
+**Model (Resale_CS.EstimateFairPrice, weighted k-nearest-neighbour regression on comparable sales):**
+
+1. Candidates: sales of the same town and flat type in the last 24 months.
+2. Each sale's price per sqm is brought to today's level with a monthly median-psm index for the flat type.
+3. Similarity weight = 1 / (1 + |Δarea|/10 + |Δlease yrs|/5 + |Δstorey|/6 + months ago/12). The 30 most similar sales are kept.
+4. Estimate = weighted mean adjusted psm × floor area. Fair range = P25–P75 of the adjusted prices. Confidence is High at ≥20 comparables with spread ≤15%, Medium at ≥10 with spread ≤25%, otherwise Low. Fewer than 5 comparables gives no verdict.
+
+**From estimate to decision:**
+
+| Output | Rule | Decision it informs |
+|---|---|---|
+| Verdict | gap = asking / estimate − 1: ≤ −5% below, ≤ +5% fair, ≤ +10% above, else overpriced | Pursue, negotiate or walk away |
+| Opening offer | midpoint of P25 and the estimate | First offer to make |
+| Walk-away price | min(asking, P75) | The highest price to accept (above it you pay more than 3 in 4 comparable buyers) |
+| Cash over valuation | max(0, asking − estimate) | Cash needed on top of the loan (loans only cover the valuation) |
+| 6-month momentum | change in the flat-type index | Buy now or wait |
+
+**Trust:** `ValuationBacktestTimer` (daily 03:00, or woken when no result from the last 2 days exists) re-values 300 recent sales using only data from before each sale and stores the result in `ModelAccuracy`. The screen shows it: on 25 Oct 2026 the median error was 4.0%, with 60% of estimates within 5% and 88% within 10%. The back-test runs in a timer because it takes longer than a screen request is allowed to.
 
 ## 5. Infrastructure (AWS, self-managed OutSystems 11)
 
