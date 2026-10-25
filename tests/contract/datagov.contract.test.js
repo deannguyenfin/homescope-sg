@@ -28,7 +28,11 @@ async function search(params) {
     last = Date.now();
     const res = await fetch(`${BASE}/datastore_search?${qs}`, { headers });
     if (res.status === 429 && attempt < 5) { await sleep(5000 * attempt); continue; }
-    assert.equal(res.status, 200, `HTTP ${res.status}`);
+    if (res.status !== 200) {
+      const detail = `HTTP ${res.status}: ${(await res.text()).slice(0, 300).replace(/s+/g, ' ')}`;
+      if (process.env.GITHUB_ACTIONS) console.log(`::error title=data.gov.sg contract::${detail}`);
+      assert.fail(detail);
+    }
     return res.json();
   }
 }
