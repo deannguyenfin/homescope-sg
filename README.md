@@ -78,6 +78,8 @@ HOMESCOPE_URL=https://<host>/HomeScope/ npx playwright test   # point at another
 
 You can set `DATAGOV_API_KEY` to use the authenticated data.gov.sg tier. The contract tests pace their calls and back off on HTTP 429 when running anonymously.
 
+**Last verified run (25 Oct 2026, Dev):** the initial sync loaded 243,500 / 243,500 records in 5 chained timer runs (about 8 minutes, no errors). Contract tests passed 5/5 and Playwright desktop passed 14/14.
+
 ## Infrastructure (Terraform on AWS)
 
 The Terraform provisions a **self-managed OutSystems 11 environment**, one per stage (dev and prod):
