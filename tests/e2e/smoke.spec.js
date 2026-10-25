@@ -1,4 +1,5 @@
-// Smoke: every public screen renders, navigation works, Admin is protected.
+// Smoke (signed in as a standard user): every screen renders, navigation works,
+// Admin is protected; anonymous visitors are sent to Login.
 import { test, expect } from '@playwright/test';
 
 const screens = [
@@ -33,11 +34,22 @@ test('top menu navigates between screens', async ({ page, isMobile }) => {
   }
 });
 
-test('Admin is hidden from the menu and requires sign-in', async ({ page }) => {
-  await page.goto('');
-  await expect(page.getByText('Dashboard', { exact: true }).first()).toBeAttached();
+test('Admin is hidden from the menu and blocked for a standard user', async ({ page }) => {
+  await page.goto('Dashboard');
+  await expect(page.getByText('HDB Resale Market Dashboard').first()).toBeVisible();
   await expect(page.locator('a', { hasText: /^Admin$/ })).toHaveCount(0);
   await page.goto('Admin');
-  await expect(page).toHaveURL(/\/Login/);
-  await expect(page.getByRole('button', { name: 'Login' })).toBeVisible();
+  await expect(page).toHaveURL(/InvalidPermissions|\/Login/);
+});
+
+test.describe('anonymous visitor', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  for (const path of ['Dashboard', 'Admin']) {
+    test(`${path} redirects to the Login screen`, async ({ page }) => {
+      await page.goto(path);
+      await expect(page).toHaveURL(/\/Login/);
+      await expect(page.getByRole('button', { name: 'Login' })).toBeVisible();
+    });
+  }
 });

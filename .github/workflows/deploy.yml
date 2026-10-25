@@ -159,4 +159,6 @@ jobs:
       - run: npx playwright test smoke
         env:
           CI: "true"
+          E2E_USERNAME: ${{ secrets.E2E_USERNAME }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
           HOMESCOPE_URL: ${{ inputs.environment == 'prod' && vars.HOMESCOPE_PROD_URL || vars.HOMESCOPE_TEST_URL }}

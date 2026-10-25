@@ -76,6 +76,9 @@ npx playwright install chromium
 npm run test:unit                         # LifeTime deploy script (no network)
 npm run test:rules                        # verdict, confidence, negotiation, affordability, sync self-test
 npm run test:contract                     # data.gov.sg contract: envelope, schema, formats, paging, filters
+
+# Screens require sign-in: Playwright logs in once with a standard (non-admin) end-user account.
+export E2E_USERNAME=<user> E2E_PASSWORD=<password>
 HOMESCOPE_EXPECT_DATA=0 npx playwright test   # UI smoke + affordability (works on an empty environment)
 npx playwright test                       # full suite incl. data exploration (needs a completed sync)
 HOMESCOPE_URL=https://<host>/HomeScope/ npx playwright test   # point at another environment
@@ -86,7 +89,7 @@ HOMESCOPE_URL=https://<host>/HomeScope/ npx playwright test   # point at another
 | `unit/lifetime-deploy.test.js` | The deploy script tags and promotes Services before the UI, promotes to Production only the version running unmodified in Test, treats warnings, errors and aborts as failures, and validates its configuration before any call. |
 | `rules/rules-api.test.js` | The business rules on the live server: verdict thresholds at the −5 / 5 / 10% boundaries, NODATA under 5 comparables, the confidence matrix, opening offer / walk-away / COV, the annuity and MSR maths (including 0% interest), and input validation. It also checks that the sync upsert is idempotent and detects changes. That check runs in a rolled-back transaction and is disabled in prod by `EnableSelfTest`. |
 | `contract/datagov.contract.test.js` | The upstream API still matches the shape that `DataGov_IS` and the OPENJSON upsert depend on. It checks field names, string-encoded numbers, month and storey formats, contiguous `_id` paging and JSON filters. It runs daily in CI to catch drift before it breaks the sync. |
-| `e2e/smoke.spec.js` | Every screen renders without client errors, the menu navigation works, the Admin link is hidden from anonymous users and the Admin screen requires sign-in. |
+| `e2e/smoke.spec.js` | Every screen renders without client errors, the menu navigation works, and the Admin link is hidden and the Admin screen blocked for a standard user. Anonymous visitors are redirected to Login. `auth.setup.js` signs in once and shares the session with every spec. |
 | `e2e/affordability.spec.js` | The instalment calculation, the MSR within/exceeds messages and the 0% interest edge case. |
 | `e2e/fairprice.spec.js` | The verdict and negotiation plan rules (offer ≤ fair value, walk-away ≤ asking, COV = asking − valuation), 10 comparables that fit without scrolling, and a low asking price that flips the verdict to *Below market value* with zero COV. |
 | `e2e/data.spec.js` | KPIs and charts populate, filters narrow the results, and Explore search, sort and pagination work. Towns lists every town. |
@@ -152,7 +155,7 @@ Important outputs: `app_url`, `alb_dns_name`, `db_endpoint`, `controller_instanc
 
 The workflows need these secrets and variables:
 
-- **Secrets:** `AWS_DEPLOY_ROLE_ARN`, `AWS_ACCOUNT_ID`, `LIFETIME_URL`, `LIFETIME_TOKEN` (a LifeTime service account), and optionally `DATAGOV_API_KEY`.
+- **Secrets:** `AWS_DEPLOY_ROLE_ARN`, `AWS_ACCOUNT_ID`, `LIFETIME_URL`, `LIFETIME_TOKEN` (a LifeTime service account), `E2E_USERNAME` / `E2E_PASSWORD` (a standard end-user account for the Playwright tests), and optionally `DATAGOV_API_KEY`.
 - **Variables:** `HOMESCOPE_URL`, `HOMESCOPE_TEST_URL` and `HOMESCOPE_PROD_URL`.
 
 The `test`, `prod` and `lifetime` GitHub environments need required reviewers. The `<env>-plan` environments need none.
