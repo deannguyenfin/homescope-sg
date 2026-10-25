@@ -1,21 +1,29 @@
 name: Deploy
 
-# Infrastructure (Terraform, OIDC to AWS) and application promotion
-# (LifeTime Deployment API) for the self-managed OutSystems environments.
+# Infrastructure (Terraform via OIDC) and application promotion (LifeTime API)
+# for the self-managed OutSystems environments: lifetime, dev, test, prod.
+#
+# GitHub environments:
+#   <env>-plan  no reviewers                     -> role homescope-github-plan (read-only)
+#   <env>       reviewers on test, prod, lifetime -> role homescope-github-deploy
+# The reviewer approves the apply job after reading the plan in the run summary.
+#
+# Application path: Development -> Test (tags the version) -> Production
+# (only the version already running unmodified in Test).
 on:
   workflow_dispatch:
     inputs:
       environment:
         description: Target environment
         type: choice
-        options: [dev, prod]
+        options: [dev, test, prod, lifetime]
         default: dev
       apply:
-        description: Apply the Terraform plan
+        description: Apply the reviewed Terraform plan
         type: boolean
         default: false
       promote_version:
-        description: "App version to promote Development -> Production (blank = skip)"
+        description: "App version to promote into test (from Development) or prod (from Test); blank = skip"
         type: string
         default: ""
 
@@ -27,10 +35,14 @@ concurrency:
   group: deploy-${{ inputs.environment }}
   cancel-in-progress: false
 
+env:
+  TF_VERSION: 1.9.8
+  AWS_REGION: ap-southeast-1
+
 jobs:
-  infrastructure:
+  plan:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }} # prod requires reviewer approval
+    environment: ${{ inputs.environment }}-plan
     defaults:
       run:
         working-directory: infra/terraform
@@ -38,41 +50,104 @@ jobs:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.9.8
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ap-southeast-1
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: init
         run: |
           sed -i "s/<account-id>/${{ secrets.AWS_ACCOUNT_ID }}/" envs/${{ inputs.environment }}.backend.hcl
           terraform init -input=false -backend-config=envs/${{ inputs.environment }}.backend.hcl
-      - run: terraform plan -input=false -var-file=envs/${{ inputs.environment }}.tfvars -out=tfplan
-      - if: inputs.apply
-        run: terraform apply -input=false tfplan
+      - name: plan (summary + full plan in the run summary for the reviewer)
+        run: |
+          terraform plan -input=false -lock-timeout=5m -var-file=envs/${{ inputs.environment }}.tfvars -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+          FENCE='```'
+          {
+            echo "## Terraform plan: ${{ inputs.environment }}"
+            echo "$FENCE"
+            grep -E '^Plan:|^No changes' plan.txt || true
+            echo "$FENCE"
+            echo "<details><summary>Full plan</summary>"
+            echo
+            echo "${FENCE}hcl"
+            head -c 60000 plan.txt
+            echo "$FENCE"
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: |
+            infra/terraform/tfplan
+            infra/terraform/.terraform.lock.hcl
+          retention-days: 5
+
+  apply:
+    if: inputs.apply
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # approval gate: the reviewer has the plan above
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}
+          path: infra/terraform
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: apply the reviewed plan (Terraform refuses it if the state changed since the plan)
+        run: |
+          sed -i "s/<account-id>/${{ secrets.AWS_ACCOUNT_ID }}/" envs/${{ inputs.environment }}.backend.hcl
+          terraform init -input=false -backend-config=envs/${{ inputs.environment }}.backend.hcl
+          terraform apply -input=false -lock-timeout=5m tfplan
 
   promote:
-    if: inputs.environment == 'prod' && inputs.promote_version != ''
-    needs: infrastructure
+    if: ${{ !failure() && !cancelled() && inputs.promote_version != '' && (inputs.environment == 'test' || inputs.environment == 'prod') }}
+    needs: [plan, apply]
     runs-on: ubuntu-latest
-    environment: prod
+    environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: LifeTime deployment Development -> Production
-        run: >
-          node scripts/lifetime-deploy.mjs --from Development --to Production
-          --apps "HomeScope Services,HomeScope"
-          --version "${{ inputs.promote_version }}"
-          --notes "Release ${{ inputs.promote_version }} (run ${{ github.run_id }})"
+      - name: LifeTime deployment
+        run: |
+          if [ "${{ inputs.environment }}" = "test" ]; then
+            FROM=Development; TO=Test; TAG=--tag
+          else
+            FROM=Test; TO=Production; TAG=
+          fi
+          node scripts/lifetime-deploy.mjs --from "$FROM" --to "$TO" $TAG \
+            --apps "HomeScope Services,HomeScope" \
+            --version "${{ inputs.promote_version }}" \
+            --notes "Release ${{ inputs.promote_version }} (run ${{ github.run_id }})"
         env:
           LIFETIME_URL: ${{ secrets.LIFETIME_URL }}
           LIFETIME_TOKEN: ${{ secrets.LIFETIME_TOKEN }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: record the release (new front-ends then wait for the app before joining the ALB)
+        run: >
+          aws ssm put-parameter --overwrite --type String
+          --name "/homescope-${{ inputs.environment }}/release"
+          --value "${{ inputs.promote_version }}"
 
   smoke:
-    if: inputs.environment == 'prod' && inputs.promote_version != ''
+    if: ${{ !failure() && !cancelled() && needs.promote.result == 'success' }}
     needs: promote
     runs-on: ubuntu-latest
     steps:
@@ -84,4 +159,4 @@ jobs:
       - run: npx playwright test smoke
         env:
           CI: "true"
-          HOMESCOPE_URL: ${{ vars.HOMESCOPE_PROD_URL }}
+          HOMESCOPE_URL: ${{ inputs.environment == 'prod' && vars.HOMESCOPE_PROD_URL || vars.HOMESCOPE_TEST_URL }}

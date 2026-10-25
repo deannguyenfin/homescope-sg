@@ -1,0 +1,35 @@
+# checkov hard-fails CI (no soft_fail). Every skip below is a deliberate,
+# reviewed decision; anything new fails the build until it is fixed or added
+# here with a reason.
+framework:
+  - terraform
+directory:
+  - infra/terraform
+skip-path:
+  - infra/terraform/.terraform
+  - infra/terraform/bootstrap/.terraform
+compact: true
+quiet: true
+skip-check:
+  # --- Environment-driven: enforced for prod by the guardrails in main.tf (and tested) ---
+  - CKV_AWS_157   # RDS Multi-AZ: var.db_multi_az, required in prod
+  - CKV_AWS_293   # RDS deletion protection: var.deletion_protection, required in prod
+  - CKV_AWS_150   # ALB deletion protection: same variable
+  - CKV_AWS_2     # HTTP listener: only redirects to HTTPS; HTTP-only allowed in dev from known CIDRs only
+  - CKV_AWS_260   # port 80 ingress: same rule (redirect / guarded dev); servers_from_alb is SG-referenced, not 0.0.0.0/0
+  # --- By design ---
+  - CKV_AWS_378   # ALB -> target over HTTP: TLS terminates at the ALB, targets are in private subnets
+  - CKV_AWS_145   # logs bucket SSE-KMS: ALB access logs only support SSE-S3
+  - CKV_AWS_21    # logs bucket versioning: append-only log sink with lifecycle expiry
+  - CKV_AWS_18    # S3 access logging: object-level audit comes from CloudTrail data events (account baseline)
+  - CKV2_AWS_62   # S3 event notifications: nothing consumes them
+  - CKV_AWS_144   # S3 cross-region replication: single-region by decision (see README, DR)
+  - CKV_AWS_119   # DynamoDB CMK: the lock table holds only lock IDs
+  - CKV2_AWS_57   # platform secret rotation: the passwords are applied by the Configuration Tool; rotation is a runbook (README)
+  - CKV2_AWS_34   # SSM controller-ready flag: a timestamp, not a secret
+  - CKV_AWS_26    # SNS alarm topic: CloudWatch alarms cannot publish to a topic encrypted with the AWS-managed key; alarm text is not sensitive
+  - CKV_AWS_158   # CloudWatch log group CMK: logs hold no secrets (WAF redacts cookie/authorization); AWS-managed encryption applies
+  - CKV_AWS_338   # log retention >= 1 year: var.log_retention_days per environment (cost)
+  - CKV_AWS_394   # AZ zone-id pinning: az_count slices the first N AZs; subnets are fixed in state once created
+  - CKV_AWS_192   # WAF Log4j: AWSManagedRulesKnownBadInputsRuleSet is attached through a dynamic block checkov cannot resolve
+  - CKV2_AWS_76   # same as CKV_AWS_192

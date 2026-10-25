@@ -33,7 +33,10 @@ test('top menu navigates between screens', async ({ page, isMobile }) => {
   }
 });
 
-test('Admin requires sign-in', async ({ page }) => {
+test('Admin is hidden from the menu and requires sign-in', async ({ page }) => {
+  await page.goto('');
+  await expect(page.getByText('Dashboard', { exact: true }).first()).toBeAttached();
+  await expect(page.locator('a', { hasText: /^Admin$/ })).toHaveCount(0);
   await page.goto('Admin');
   await expect(page).toHaveURL(/\/Login/);
   await expect(page.getByRole('button', { name: 'Login' })).toBeVisible();

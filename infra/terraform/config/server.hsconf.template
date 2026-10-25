@@ -3,7 +3,12 @@
   server.hsconf template for HomeScope OutSystems 11 servers.
   Rendered on each server by templates/bootstrap.ps1.tftpl ({{TOKENS}}).
   Passwords are NOT stored here: they are passed to
-  ConfigurationTool.com /SetupInstall from Secrets Manager at boot.
+  ConfigurationTool.com /SetupInstall from Secrets Manager at boot, and the
+  tool writes them back encrypted with the farm private.key.
+  The controller / front-end role is decided by CompilerServerHostname (a
+  front-end points it at the controller), not by a setting in this file.
+  RabbitMQ credentials for cache invalidation are created by
+  /CreateUpgradeCacheInvalidationService on the controller (see README trade-offs).
   Regenerate the full schema for your exact Platform Server release with
   `ConfigurationTool.com /GenerateTemplates` and keep the tokens below.
 -->
@@ -39,7 +44,6 @@
     <DeploymentServerPort>12001</DeploymentServerPort>
     <DeploymentControllerServerPort>12000</DeploymentControllerServerPort>
     <SchedulerServerPort>12002</SchedulerServerPort>
-    <ServerRole>{{SERVER_ROLE}}</ServerRole>
   </ServiceConfiguration>
   <CacheInvalidationConfiguration>
     <ServiceHost>{{CONTROLLER_HOST}}</ServiceHost>

@@ -1,29 +1,70 @@
 <powershell>
 # =============================================================================
 # OutSystems 11 Platform Server bootstrap (rendered by Terraform).
-# Role: ${server_role}   Environment: ${environment_name}
-# Idempotent: each step writes a marker under C:\ProgramData\HomeScope\.
+# Role: ${server_role}   Profile: ${server_profile}   Environment: ${environment_name}
+# Idempotent: each step writes a marker under C:\ProgramData\HomeScope\ and is
+# retried with back-off, so a reboot or a transient S3 / RDS error resumes
+# where it stopped instead of leaving a half-built server.
 # =============================================================================
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Role        = '${server_role}'
+$ServerProfile = '${server_profile}'
 $Region      = '${region}'
 $Bucket      = '${artifacts_bucket}'
 $InstallPath = '${outsystems_install_path}'
 $Markers     = 'C:\ProgramData\HomeScope'
-New-Item -ItemType Directory -Force -Path $Markers, 'D:\Installers' | Out-Null
+New-Item -ItemType Directory -Force -Path $Markers, 'D:\Installers' -ErrorAction SilentlyContinue | Out-Null
 Start-Transcript -Path "$Markers\bootstrap.log" -Append
 
 function Step($name, [scriptblock]$body) {
   if (Test-Path "$Markers\$name.done") { Write-Host "skip $name"; return }
-  Write-Host "== $name"; & $body; New-Item -ItemType File "$Markers\$name.done" | Out-Null
+  for ($i = 1; $i -le 3; $i++) {
+    try {
+      Write-Host "== $name (attempt $i)"; & $body
+      New-Item -ItemType File "$Markers\$name.done" | Out-Null; return
+    } catch {
+      Write-Warning "$name failed: $_"
+      if ($i -eq 3) { throw }
+      Start-Sleep -Seconds (30 * $i * $i)
+    }
+  }
+}
+
+function Wait-Until([scriptblock]$test, [int]$minutes, [string]$what) {
+  $deadline = (Get-Date).AddMinutes($minutes)
+  while (-not (& $test)) {
+    if ((Get-Date) -gt $deadline) { throw "timed out after $minutes min waiting for $what" }
+    Start-Sleep -Seconds 30
+  }
+}
+
+# --- 0. OS: timezone + RDS certificate trust ---------------------------------
+Step 'os' {
+  # Same timezone as the RDS instance, so CurrDate(), timers and DB dates agree.
+  Set-TimeZone -Id 'Singapore Standard Time'
+  # Encrypt=True;TrustServerCertificate=False needs the RDS CA chain locally.
+  $pem = "$Markers\rds-bundle.pem"
+  Invoke-WebRequest -UseBasicParsing -Uri "https://truststore.pki.rds.amazonaws.com/$Region/$Region-bundle.pem" -OutFile $pem
+  $certs = [regex]::Matches((Get-Content $pem -Raw), '-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----')
+  if ($certs.Count -eq 0) { throw 'RDS CA bundle is empty' }
+  $n = 0
+  foreach ($c in $certs) {
+    $f = "$Markers\rds-ca-$n.cer"; $n++
+    Set-Content -Path $f -Value $c.Value -Encoding ascii
+    Import-Certificate -FilePath $f -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+  }
 }
 
 # --- 1. Data disk as D: ------------------------------------------------------
 Step 'disk' {
-  Get-Disk | Where-Object PartitionStyle -eq 'RAW' | Select-Object -First 1 |
-    Initialize-Disk -PartitionStyle GPT -PassThru |
-    New-Partition -DriveLetter D -UseMaximumSize |
-    Format-Volume -FileSystem NTFS -NewFileSystemLabel 'OutSystems' -Confirm:$false
+  if (-not (Get-Volume -DriveLetter D -ErrorAction SilentlyContinue)) {
+    Get-Disk | Where-Object PartitionStyle -eq 'RAW' | Select-Object -First 1 |
+      Initialize-Disk -PartitionStyle GPT -PassThru |
+      New-Partition -DriveLetter D -UseMaximumSize |
+      Format-Volume -FileSystem NTFS -NewFileSystemLabel 'OutSystems' -Confirm:$false
+  }
+  New-Item -ItemType Directory -Force -Path 'D:\Installers' | Out-Null
 }
 
 # --- 2. Windows features + prerequisites --------------------------------------
@@ -34,49 +75,99 @@ Step 'prereqs' {
   Start-Process 'D:\Installers\dotnet-hosting.exe' -ArgumentList '/install /quiet /norestart' -Wait
 }
 
-# --- 3. Platform Server binaries ---------------------------------------------
+# --- 3. Platform Server binaries (pinned release, see platform_server_version)
 Step 'platform' {
   Read-S3Object -BucketName $Bucket -Key '${platform_installer_key}' -File 'D:\Installers\PlatformServer.exe' -Region $Region
   Start-Process 'D:\Installers\PlatformServer.exe' -ArgumentList "/S /D=$InstallPath" -Wait
 }
 
-# --- 4. Shared farm configuration (private.key + server.hsconf) ---------------
-Step 'config' {
-  $p  = (Get-SECSecretValue -SecretId '${platform_secret_arn}' -Region $Region).SecretString | ConvertFrom-Json
-  $db = (Get-SECSecretValue -SecretId '${db_master_secret_arn}' -Region $Region).SecretString | ConvertFrom-Json
+$p = (Get-SECSecretValue -SecretId '${platform_secret_arn}' -Region $Region).SecretString | ConvertFrom-Json
 
+# --- 4. Controller only: dedicated OutSystems admin login ---------------------
+# The only use of the RDS master secret. The master password is rotated by RDS
+# and must never be baked into server.hsconf; OSADMIN is a stable login with
+# just the rights the Configuration Tool needs. Front-ends cannot read the
+# master secret at all (separate IAM role).
+if ($Role -eq 'controller') {
+  Step 'dbadmin' {
+    $m = (Get-SECSecretValue -SecretId '${db_master_secret_arn}' -Region $Region).SecretString | ConvertFrom-Json
+    $b = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
+    $b['Data Source'] = '${db_host}'; $b['Initial Catalog'] = 'master'
+    $b['User ID'] = $m.username; $b['Password'] = $m.password
+    $b['Encrypt'] = $true; $b['TrustServerCertificate'] = $false
+    $u  = $p.admin_user
+    $pw = $p.admin_password.Replace("'", "''")
+    $sql = @"
+IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'$u')
+  CREATE LOGIN [$u] WITH PASSWORD = N'$pw', CHECK_POLICY = ON;
+ELSE
+  ALTER LOGIN [$u] WITH PASSWORD = N'$pw';
+GRANT CREATE ANY DATABASE TO [$u];
+GRANT ALTER ANY LOGIN TO [$u];
+GRANT VIEW SERVER STATE TO [$u];
+"@
+    $conn = New-Object System.Data.SqlClient.SqlConnection $b.ConnectionString
+    $conn.Open()
+    try { $cmd = $conn.CreateCommand(); $cmd.CommandText = $sql; [void]$cmd.ExecuteNonQuery() }
+    finally { $conn.Close(); $m = $null; $b = $null }
+  }
+}
+
+# --- 5. Front-end only: wait for the controller -------------------------------
+if ($Role -eq 'frontend') {
+  Wait-Until { (Get-SSMParameter -Name '${ready_parameter}' -Region $Region).Value -ne 'pending' } 90 'the Deployment Controller'
+}
+
+# --- 6. Shared farm configuration (private.key + server.hsconf) ---------------
+Step 'config' {
   # Identical private.key on every server: encrypted settings + session tokens.
   Set-Content -Path "$InstallPath\private.key" -Value $p.private_key -NoNewline -Encoding ascii
 
   Read-S3Object -BucketName $Bucket -Key 'config/server.hsconf.template' -File "$Markers\server.hsconf.template" -Region $Region
   $conf = (Get-Content "$Markers\server.hsconf.template" -Raw).
     Replace('{{DB_HOST}}', '${db_host}').
-    Replace('{{DB_ADMIN_USER}}', $db.username).
+    Replace('{{DB_ADMIN_USER}}', $p.admin_user).
     Replace('{{DB_RUNTIME_USER}}', $p.runtime_user).
     Replace('{{DB_LOG_ADMIN_USER}}', $p.log_admin_user).
     Replace('{{DB_LOG_RUNTIME_USER}}', $p.log_runtime_user).
     Replace('{{DB_SESSION_USER}}', $p.session_user).
-    Replace('{{CONTROLLER_HOST}}', '${controller_private_dns}').
-    Replace('{{SERVER_ROLE}}', $Role)
+    Replace('{{CONTROLLER_HOST}}', '${controller_private_dns}')
   Set-Content -Path "$InstallPath\server.hsconf" -Value $conf -Encoding utf8
 
-  # Passwords are passed on the command line only, never written to disk.
-  $cfgArgs = @('/SetupInstall', $db.password, $p.runtime_password, $p.log_admin_password,
+  # The template holds no passwords. They are passed to the Configuration Tool
+  # as arguments (visible to local administrators only while it runs), and it
+  # stores them in server.hsconf encrypted with private.key.
+  $cfgArgs = @('/SetupInstall', $p.admin_password, $p.runtime_password, $p.log_admin_password,
             $p.log_runtime_password, $p.session_password)
   if ($Role -eq 'controller') { $cfgArgs += @('/UpgradeInstall', '/CreateUpgradeCacheInvalidationService') }
   & "$InstallPath\ConfigurationTool.com" @cfgArgs
   if ($LASTEXITCODE -ne 0) { throw "ConfigurationTool /SetupInstall failed ($LASTEXITCODE)" }
 }
 
-# --- 5. Controller only: Service Center + System Components -------------------
+# --- 7. Controller only: Service Center, admin password, LifeTime, ready -----
 if ($Role -eq 'controller') {
   Step 'servicecenter' {
     & "$InstallPath\ConfigurationTool.com" /SCInstall
     if ($LASTEXITCODE -ne 0) { throw "Service Center install failed ($LASTEXITCODE)" }
+    # Replace the default platform admin password before anything is reachable.
+    & "$InstallPath\ConfigurationTool.com" /SetPlatformServerAdminPassword $p.platform_admin_password
+    if ($LASTEXITCODE -ne 0) { throw "Setting the platform admin password failed ($LASTEXITCODE)" }
+  }
+  if ($ServerProfile -eq 'lifetime') {
+    Step 'lifetime' {
+      # The LifeTime installer ships the LifeTime solution next to the binaries.
+      $osp = Get-ChildItem -Path $InstallPath -Recurse -Filter 'LifeTime*.osp' | Select-Object -First 1
+      if (-not $osp) { throw 'LifeTime solution (.osp) not found: check platform_server_version / installer' }
+      & "$InstallPath\OSPTool.com" /Publish $osp.FullName localhost admin $p.platform_admin_password
+      if ($LASTEXITCODE -ne 0) { throw "LifeTime solution publish failed ($LASTEXITCODE)" }
+    }
+  }
+  Step 'ready' {
+    Write-SSMParameter -Name '${ready_parameter}' -Value (Get-Date -Format o) -Type String -Overwrite $true -Region $Region
   }
 }
 
-# --- 6. CloudWatch agent: IIS, Windows events, OutSystems services ------------
+# --- 8. CloudWatch agent: IIS, Windows events, OutSystems services ------------
 Step 'cloudwatch' {
   $cw = @{
     logs = @{ logs_collected = @{
@@ -89,6 +180,7 @@ Step 'cloudwatch' {
       ) }
     } }
     metrics = @{ namespace = 'HomeScope/OutSystems'; append_dimensions = @{ AutoScalingGroupName = '$${aws:AutoScalingGroupName}'; InstanceId = '$${aws:InstanceId}' }
+      aggregation_dimensions = @(@('InstanceId'), @('AutoScalingGroupName'))
       metrics_collected = @{
         Memory      = @{ measurement = @('% Committed Bytes In Use') }
         LogicalDisk = @{ measurement = @('% Free Space'); resources = @('*') }
@@ -99,18 +191,31 @@ Step 'cloudwatch' {
   & 'C:\Program Files\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1' -a fetch-config -m ec2 -s -c file:C:\ProgramData\Amazon\AmazonCloudWatchAgent\config.json
 }
 
-# --- 7. Front-end: wait for apps, then release the ASG lifecycle hook ---------
+# --- 9. Front-end: readiness gate, health file, release the lifecycle hook ----
 if ($Role -eq 'frontend') {
   $token = Invoke-RestMethod -Method PUT -Uri 'http://169.254.169.254/latest/api/token' -Headers @{ 'X-aws-ec2-metadata-token-ttl-seconds' = '300' }
   $iid = Invoke-RestMethod -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{ 'X-aws-ec2-metadata-token' = $token }
-  # The controller pushes every published application to a newly registered
-  # front-end; poll the app until it answers before taking traffic.
-  $deadline = (Get-Date).AddMinutes(45)
-  do {
-    Start-Sleep -Seconds 30
-    try { $ok = (Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost/HomeScope/' -TimeoutSec 20).StatusCode -lt 400 } catch { $ok = $false }
-  } until ($ok -or (Get-Date) -gt $deadline)
-  $result = if ($ok) { 'CONTINUE' } else { 'ABANDON' }
+  $result = 'CONTINUE'
+  try {
+    # Platform ready = the OutSystems services on this server are running.
+    Wait-Until {
+      $s = Get-Service -Name 'OutSystems Deployment Service', 'OutSystems Scheduler Service' -ErrorAction SilentlyContinue
+      $s -and -not ($s | Where-Object Status -ne 'Running')
+    } 30 'OutSystems services'
+    # After the first release, the controller pushes every published app to a
+    # new front-end: wait for the app too. Before it (empty farm) skip this.
+    $released = $true
+    try { Get-SSMParameter -Name '${release_parameter}' -Region $Region | Out-Null } catch { $released = $false }
+    if ($released) {
+      Wait-Until {
+        try { (Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost${app_path}' -TimeoutSec 20).StatusCode -lt 400 } catch { $false }
+      } 45 'the application'
+    }
+    # The ALB health check reads this file: written only when the server is ready.
+    Set-Content -Path 'C:\inetpub\wwwroot\health.html' -Value 'ok' -Encoding ascii
+  } catch {
+    Write-Warning "front-end not ready: $_"; $result = 'ABANDON'
+  }
   Complete-ASLifecycleAction -AutoScalingGroupName '${asg_name}' -LifecycleHookName '${lifecycle_hook_name}' -InstanceId $iid -LifecycleActionResult $result -Region $Region
 }
 

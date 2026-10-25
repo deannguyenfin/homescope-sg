@@ -20,7 +20,8 @@ resource "aws_sns_topic_subscription" "email" {
 }
 
 locals {
-  alarms = {
+  frontend_alarms = toset(["alb-5xx", "alb-latency", "unhealthy-hosts", "frontend-memory"])
+  all_alarms = {
     alb-5xx = {
       namespace = "AWS/ApplicationELB", metric = "HTTPCode_Target_5XX_Count", stat = "Sum"
       threshold = 20, op = "GreaterThanThreshold", periods = 2
@@ -57,7 +58,21 @@ locals {
       dims      = { InstanceId = var.controller_instance_id }
       desc      = "Deployment Controller failed status check (deploys + timers stop)"
     }
+    controller-memory = {
+      namespace = "HomeScope/OutSystems", metric = "Memory % Committed Bytes In Use", stat = "Average"
+      threshold = 90, op = "GreaterThanThreshold", periods = 3
+      dims      = { InstanceId = var.controller_instance_id }
+      desc      = "Controller committed memory above 90%"
+    }
+    frontend-memory = {
+      namespace = "HomeScope/OutSystems", metric = "Memory % Committed Bytes In Use", stat = "Average"
+      threshold = 90, op = "GreaterThanThreshold", periods = 3
+      dims      = { AutoScalingGroupName = var.frontend_asg_name }
+      desc      = "Front-end farm committed memory above 90% (scale-out is CPU-based)"
+    }
   }
+  # The LifeTime environment has no front-ends and no public traffic: skip the farm alarms there.
+  alarms = { for k, v in local.all_alarms : k => v if var.has_frontends || !contains(local.frontend_alarms, k) }
 }
 
 resource "aws_cloudwatch_metric_alarm" "this" {

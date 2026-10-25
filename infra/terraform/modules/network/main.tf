@@ -25,6 +25,12 @@ resource "aws_vpc" "this" {
   tags                 = { Name = "${var.name}-vpc" }
 }
 
+# Nothing uses the default security group: strip all its rules.
+resource "aws_default_security_group" "this" {
+  vpc_id = aws_vpc.this.id
+  tags   = { Name = "${var.name}-default-deny" }
+}
+
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
   tags   = { Name = "${var.name}-igw" }
@@ -122,6 +128,7 @@ resource "aws_vpc_endpoint" "s3" {
   tags              = { Name = "${var.name}-s3" }
 }
 
+# Interface endpoints only answer: no egress rules.
 # Interface endpoints so SSM Session Manager works without bastions or open RDP.
 resource "aws_security_group" "endpoints" {
   name        = "${var.name}-vpce"
@@ -133,12 +140,6 @@ resource "aws_security_group" "endpoints" {
     to_port     = 443
     protocol    = "tcp"
     cidr_blocks = [var.vpc_cidr]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
@@ -154,7 +155,7 @@ resource "aws_vpc_endpoint" "interface" {
 }
 
 resource "aws_flow_log" "this" {
-  count                = var.flow_logs_bucket_arn == null ? 0 : 1
+  count                = var.enable_flow_logs ? 1 : 0
   vpc_id               = aws_vpc.this.id
   traffic_type         = "REJECT"
   log_destination_type = "s3"

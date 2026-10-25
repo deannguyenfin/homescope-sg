@@ -39,3 +39,9 @@ variable "controller_instance_id" {
 variable "frontend_asg_name" {
   type = string
 }
+
+variable "has_frontends" {
+  description = "false for the LifeTime environment (no front-end farm): ALB and farm alarms are not created."
+  type        = bool
+  default     = true
+}

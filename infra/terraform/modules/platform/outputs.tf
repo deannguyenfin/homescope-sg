@@ -29,3 +29,16 @@ output "platform_secret_arn" {
 output "waf_acl_arn" {
   value = aws_wafv2_web_acl.this.arn
 }
+
+output "controller_ready_parameter" {
+  value = aws_ssm_parameter.controller_ready.name
+}
+
+output "release_parameter" {
+  description = "Written by the deploy workflow after the first promotion; new front-ends then also wait for the app itself."
+  value       = local.release_parameter
+}
+
+output "internal_zone_id" {
+  value = aws_route53_zone.internal.zone_id
+}

@@ -27,8 +27,14 @@ variable "single_nat_gateway" {
   type        = bool
 }
 
+variable "enable_flow_logs" {
+  description = "Send rejected-traffic VPC flow logs to flow_logs_bucket_arn. A plain bool, so the resource count is known at plan time."
+  type        = bool
+  default     = true
+}
+
 variable "flow_logs_bucket_arn" {
-  description = "S3 bucket ARN for VPC flow logs; null disables flow logs."
+  description = "S3 bucket ARN for VPC flow logs (required when enable_flow_logs = true)."
   type        = string
   default     = null
 }

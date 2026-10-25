@@ -8,7 +8,8 @@ test.skip(process.env.HOMESCOPE_EXPECT_DATA === '0', 'environment has no synced 
 
 const money = s => Number(s.replace(/[^0-9.-]/g, ''));
 const planValue = (page, label) =>
-  page.getByText(label, { exact: true }).locator('xpath=ancestor::div[contains(@style,"justify-content")][1]').locator('[data-expression]').last();
+  // first amount rendered after the label, independent of layout markup/styles
+  page.getByText(label, { exact: true }).locator('xpath=following::*[starts-with(normalize-space(text()), "S$")][1]');
 
 async function readPlan(page) {
   const est = money(await page.getByText('Estimated fair value', { exact: true }).locator('xpath=following-sibling::div[1]').innerText());

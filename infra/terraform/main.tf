@@ -1,11 +1,47 @@
 ###############################################################################
 # HomeScope SG - self-managed OutSystems 11 environment on AWS.
-# One root module, one state per environment (dev / prod tfvars + backend).
+# One root module, one state per environment:
+#   lifetime -> dev -> test -> prod   (envs/<env>.tfvars + envs/<env>.backend.hcl)
+# The LifeTime environment is applied first; the others peer to its VPC.
 ###############################################################################
 
 locals {
   name             = "homescope-${var.environment}"
   log_group_prefix = "/homescope/${var.environment}"
+  is_lifetime      = var.environment == "lifetime"
+  peer_lifetime    = var.lifetime_vpc_id != null && var.lifetime_vpc_cidr != null
+}
+
+# Plan-time guardrails: misconfigurations fail before anything is created.
+resource "terraform_data" "guardrails" {
+  input = var.environment
+
+  lifecycle {
+    precondition {
+      condition     = var.certificate_arn != null || local.is_lifetime || (var.environment == "dev" && var.allow_insecure_http)
+      error_message = "test and prod need certificate_arn. Only dev may run HTTP-only, and only with allow_insecure_http = true."
+    }
+    precondition {
+      condition     = var.certificate_arn == null || !can(regex("replace-me", var.certificate_arn))
+      error_message = "certificate_arn is still the placeholder from the example tfvars."
+    }
+    precondition {
+      condition     = !(var.environment == "dev" && var.allow_insecure_http) || !contains(var.allowed_ingress_cidrs, "0.0.0.0/0")
+      error_message = "An HTTP-only dev environment must restrict allowed_ingress_cidrs (no 0.0.0.0/0)."
+    }
+    precondition {
+      condition     = (var.lifetime_vpc_id == null) == (var.lifetime_vpc_cidr == null)
+      error_message = "Set lifetime_vpc_id and lifetime_vpc_cidr together."
+    }
+    precondition {
+      condition     = !local.is_lifetime || (var.frontend_max == 0 && var.lifetime_vpc_id == null)
+      error_message = "The LifeTime environment has no front-ends (frontend_* = 0) and does not peer to itself."
+    }
+    precondition {
+      condition     = var.environment != "prod" || (var.db_multi_az && var.deletion_protection && var.az_count >= 2 && !var.single_nat_gateway)
+      error_message = "prod must be highly available: db_multi_az, deletion_protection, az_count >= 2 and a NAT gateway per AZ."
+    }
+  }
 }
 
 data "aws_caller_identity" "current" {}
@@ -40,6 +76,22 @@ resource "aws_s3_bucket_versioning" "artifacts" {
   }
 }
 
+# Installers are versioned: keep superseded versions 180 days for rollback.
+resource "aws_s3_bucket_lifecycle_configuration" "artifacts" {
+  bucket = aws_s3_bucket.artifacts.id
+  rule {
+    id     = "superseded-versions"
+    status = "Enabled"
+    filter {}
+    noncurrent_version_expiration {
+      noncurrent_days = 180
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
   bucket = aws_s3_bucket.artifacts.id
   rule {
@@ -71,6 +123,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
     }
     expiration {
       days = var.log_bucket_retention_days
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 }
@@ -144,6 +199,7 @@ module "network" {
   vpc_cidr             = var.vpc_cidr
   az_count             = var.az_count
   single_nat_gateway   = var.single_nat_gateway
+  enable_flow_logs     = true
   flow_logs_bucket_arn = aws_s3_bucket.logs.arn
 }
 
@@ -166,6 +222,10 @@ module "platform" {
   source                   = "./modules/platform"
   name                     = local.name
   environment_name         = var.outsystems_environment_name
+  server_profile           = local.is_lifetime ? "lifetime" : "application"
+  platform_server_version  = var.platform_server_version
+  public_path_patterns     = local.is_lifetime ? [] : ["/HomeScope", "/HomeScope/*", "/homescope", "/homescope/*", "/favicon.ico"]
+  log_retention_days       = var.log_retention_days
   vpc_id                   = module.network.vpc_id
   public_subnet_ids        = module.network.public_subnet_ids
   app_subnet_ids           = module.network.app_subnet_ids
@@ -187,7 +247,7 @@ module "platform" {
   public_hostname          = var.public_hostname
   deletion_protection      = var.deletion_protection
 
-  depends_on = [aws_s3_bucket_policy.logs, aws_s3_object.hsconf_template]
+  depends_on = [aws_s3_bucket_policy.logs, aws_s3_object.hsconf_template, terraform_data.guardrails]
 }
 
 resource "aws_vpc_security_group_ingress_rule" "db_from_platform" {
@@ -197,6 +257,58 @@ resource "aws_vpc_security_group_ingress_rule" "db_from_platform" {
   to_port                      = 1433
   ip_protocol                  = "tcp"
   description                  = "SQL Server from OutSystems servers"
+}
+
+#------------------------------------------------- LifeTime VPC peering -------
+# LifeTime manages each environment through its Deployment Controller over
+# HTTP(S). Peering keeps that traffic private; the consoles stay off the ALB.
+
+resource "aws_vpc_peering_connection" "lifetime" {
+  count       = local.peer_lifetime ? 1 : 0
+  vpc_id      = module.network.vpc_id
+  peer_vpc_id = var.lifetime_vpc_id
+  auto_accept = true # same account and region
+  tags        = { Name = "${local.name}-to-lifetime" }
+}
+
+resource "aws_route" "to_lifetime" {
+  for_each                  = local.peer_lifetime ? { for i, id in module.network.private_route_table_ids : tostring(i) => id } : {}
+  route_table_id            = each.value
+  destination_cidr_block    = var.lifetime_vpc_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.lifetime[0].id
+}
+
+data "aws_route_tables" "lifetime" {
+  count  = local.peer_lifetime ? 1 : 0
+  vpc_id = var.lifetime_vpc_id
+  filter {
+    name   = "tag:Name"
+    values = ["homescope-lifetime-app-*", "homescope-lifetime-data"]
+  }
+}
+
+resource "aws_route" "from_lifetime" {
+  for_each                  = local.peer_lifetime ? toset(data.aws_route_tables.lifetime[0].ids) : toset([])
+  route_table_id            = each.value
+  destination_cidr_block    = var.vpc_cidr
+  vpc_peering_connection_id = aws_vpc_peering_connection.lifetime[0].id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "servers_from_lifetime" {
+  for_each          = local.peer_lifetime ? toset(["80", "443"]) : toset([])
+  security_group_id = module.platform.server_security_group_id
+  cidr_ipv4         = var.lifetime_vpc_cidr
+  from_port         = tonumber(each.value)
+  to_port           = tonumber(each.value)
+  ip_protocol       = "tcp"
+  description       = "LifeTime environment management"
+}
+
+# LifeTime resolves controller.<env>.internal through the private zone.
+resource "aws_route53_zone_association" "lifetime" {
+  count   = local.peer_lifetime ? 1 : 0
+  zone_id = module.platform.internal_zone_id
+  vpc_id  = var.lifetime_vpc_id
 }
 
 module "observability" {
@@ -211,6 +323,7 @@ module "observability" {
   db_instance_id          = module.database.instance_id
   controller_instance_id  = module.platform.controller_instance_id
   frontend_asg_name       = module.platform.frontend_asg_name
+  has_frontends           = !local.is_lifetime
 }
 
 #---------------------------------------------------- backups (AWS Backup) ---

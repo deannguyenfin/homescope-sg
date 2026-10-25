@@ -11,24 +11,31 @@ resource "aws_db_subnet_group" "this" {
   subnet_ids = var.data_subnet_ids
 }
 
+# No egress rules: SQL Server only answers inbound connections.
 resource "aws_security_group" "db" {
   name        = "${var.name}-db"
   description = "SQL Server - ingress added by root module (OutSystems servers only)"
   vpc_id      = var.vpc_id
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  tags = { Name = "${var.name}-db" }
+  tags        = { Name = "${var.name}-db" }
 }
 
 resource "aws_kms_key" "db" {
   description             = "${var.name} RDS storage + Performance Insights"
   enable_key_rotation     = true
   deletion_window_in_days = 30
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AccountAdministers"
+      Effect    = "Allow"
+      Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+      Action    = "kms:*"
+      Resource  = "*"
+    }]
+  })
 }
+
+data "aws_caller_identity" "current" {}
 
 resource "aws_kms_alias" "db" {
   name          = "alias/${var.name}-rds"

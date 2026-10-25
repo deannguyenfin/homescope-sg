@@ -26,7 +26,7 @@ variable "allowed_ingress_cidrs" {
 }
 
 variable "ami_id" {
-  description = "Optional pre-baked AMI (Packer) with Platform Server prerequisites; null = latest Windows Server 2022."
+  description = "Optional pre-baked AMI (Packer) with Platform Server prerequisites; null = the latest Windows Server 2022 at first apply, then pinned."
   type        = string
   default     = null
 }
@@ -76,10 +76,51 @@ variable "logs_bucket_name" {
   type = string
 }
 
-variable "platform_installer_key" {
-  description = "S3 key of the OutSystems Platform Server installer (licensed, uploaded manually)."
+variable "server_profile" {
+  description = "application = Platform Server farm hosting apps; lifetime = the LifeTime environment (LifeTime with Platform Server installer, no public app paths)."
   type        = string
-  default     = "installers/PlatformServer-11.latest.exe"
+  default     = "application"
+  validation {
+    condition     = contains(["application", "lifetime"], var.server_profile)
+    error_message = "server_profile must be application or lifetime."
+  }
+}
+
+variable "platform_server_version" {
+  description = "Exact OutSystems release to install (e.g. 11.31.0). The installer must exist in the artifacts bucket under installers/. Pinned so every server in the farm, and every rebuild, runs the same build."
+  type        = string
+  validation {
+    condition     = can(regex("^11\\.[0-9]+\\.[0-9]+$", var.platform_server_version))
+    error_message = "platform_server_version must be an exact 11.x.y release, not latest."
+  }
+}
+
+variable "platform_installer_key" {
+  description = "Optional S3 key override for the installer; null = derived from server_profile and platform_server_version."
+  type        = string
+  default     = null
+}
+
+variable "app_path" {
+  description = "Path of the main application, polled by new front-ends once a release has been deployed."
+  type        = string
+  default     = "/HomeScope/"
+}
+
+variable "public_path_patterns" {
+  description = "ALB allowlist: only these paths reach the front-ends (max 5, case-sensitive). Everything else, including Service Center and LifeTime, gets a 404. Empty = nothing public (LifeTime)."
+  type        = list(string)
+  default     = ["/HomeScope", "/HomeScope/*", "/homescope", "/homescope/*", "/favicon.ico"]
+  validation {
+    condition     = length(var.public_path_patterns) <= 5
+    error_message = "An ALB path_pattern condition accepts at most 5 values."
+  }
+}
+
+variable "log_retention_days" {
+  description = "Retention for the WAF log group."
+  type        = number
+  default     = 30
 }
 
 variable "dotnet_hosting_installer_key" {
@@ -111,9 +152,9 @@ variable "certificate_arn" {
 }
 
 variable "health_check_path" {
-  description = "Front-end health check path (a lightweight anonymous screen or REST endpoint)."
+  description = "Front-end health check path: a static file the bootstrap writes once the server is configured, so app faults do not drain the farm."
   type        = string
-  default     = "/HomeScope/"
+  default     = "/health.html"
 }
 
 variable "waf_rate_limit_per_5min" {

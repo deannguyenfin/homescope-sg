@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform fmt / validate
+    name: Terraform fmt / validate / test / lint / scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,23 +21,32 @@ jobs:
         with:
           terraform_version: 1.9.8
       - run: terraform fmt -check -recursive infra/terraform
-      - name: validate root
+      - name: validate + test root (mocked AWS provider, no credentials)
         run: |
           terraform -chdir=infra/terraform init -backend=false -input=false
           terraform -chdir=infra/terraform validate
+          terraform -chdir=infra/terraform test
       - name: validate bootstrap
         run: |
           terraform -chdir=infra/terraform/bootstrap init -backend=false -input=false
           terraform -chdir=infra/terraform/bootstrap validate
-      - name: tflint
-        uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@v4
       - run: tflint --chdir=infra/terraform --recursive
-      - name: checkov (IaC security scan)
+      - name: checkov (hard fail; reviewed skips in .checkov.yaml)
         uses: bridgecrewio/checkov-action@v12
         with:
-          directory: infra/terraform
-          framework: terraform
-          soft_fail: true
+          config_file: .checkov.yaml
+
+  unit:
+    name: Unit tests (pipeline scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run test:unit
 
   contract:
     name: data.gov.sg contract tests
@@ -52,10 +61,23 @@ jobs:
         env:
           DATAGOV_API_KEY: ${{ secrets.DATAGOV_API_KEY }}
 
+  rules:
+    name: Business-rule tests (Resale_CS rules API on Dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run test:rules
+        env:
+          HOMESCOPE_URL: ${{ vars.HOMESCOPE_URL || 'https://personal-ljonxgvs.outsystemscloud.com/HomeScope/' }}
+
   e2e:
+    # Independent of the upstream contract: a data.gov.sg outage must not hide UI regressions.
     name: End-to-end (Playwright) against Dev
     runs-on: ubuntu-latest
-    needs: contract
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

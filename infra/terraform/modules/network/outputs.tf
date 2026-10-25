@@ -22,3 +22,8 @@ output "nat_public_ips" {
   description = "Egress IPs (allow-list these at data.gov.sg / partners if needed)."
   value       = aws_eip.nat[*].public_ip
 }
+
+output "private_route_table_ids" {
+  description = "App and data route tables (used for LifeTime VPC peering routes)."
+  value       = concat(aws_route_table.app[*].id, [aws_route_table.data.id])
+}
