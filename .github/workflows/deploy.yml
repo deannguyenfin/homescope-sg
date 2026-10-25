@@ -1,0 +1,87 @@
+name: Deploy
+
+# Infrastructure (Terraform, OIDC to AWS) and application promotion
+# (LifeTime Deployment API) for the self-managed OutSystems environments.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, prod]
+        default: dev
+      apply:
+        description: Apply the Terraform plan
+        type: boolean
+        default: false
+      promote_version:
+        description: "App version to promote Development -> Production (blank = skip)"
+        type: string
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  infrastructure:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # prod requires reviewer approval
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-southeast-1
+      - name: init
+        run: |
+          sed -i "s/<account-id>/${{ secrets.AWS_ACCOUNT_ID }}/" envs/${{ inputs.environment }}.backend.hcl
+          terraform init -input=false -backend-config=envs/${{ inputs.environment }}.backend.hcl
+      - run: terraform plan -input=false -var-file=envs/${{ inputs.environment }}.tfvars -out=tfplan
+      - if: inputs.apply
+        run: terraform apply -input=false tfplan
+
+  promote:
+    if: inputs.environment == 'prod' && inputs.promote_version != ''
+    needs: infrastructure
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: LifeTime deployment Development -> Production
+        run: >
+          node scripts/lifetime-deploy.mjs --from Development --to Production
+          --apps "HomeScope Services,HomeScope"
+          --version "${{ inputs.promote_version }}"
+          --notes "Release ${{ inputs.promote_version }} (run ${{ github.run_id }})"
+        env:
+          LIFETIME_URL: ${{ secrets.LIFETIME_URL }}
+          LIFETIME_TOKEN: ${{ secrets.LIFETIME_TOKEN }}
+
+  smoke:
+    if: inputs.environment == 'prod' && inputs.promote_version != ''
+    needs: promote
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npx playwright install --with-deps chromium
+      - run: npx playwright test smoke
+        env:
+          CI: "true"
+          HOMESCOPE_URL: ${{ vars.HOMESCOPE_PROD_URL }}

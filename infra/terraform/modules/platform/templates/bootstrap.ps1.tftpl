@@ -1,0 +1,119 @@
+<powershell>
+# =============================================================================
+# OutSystems 11 Platform Server bootstrap (rendered by Terraform).
+# Role: ${server_role}   Environment: ${environment_name}
+# Idempotent: each step writes a marker under C:\ProgramData\HomeScope\.
+# =============================================================================
+$ErrorActionPreference = 'Stop'
+$Role        = '${server_role}'
+$Region      = '${region}'
+$Bucket      = '${artifacts_bucket}'
+$InstallPath = '${outsystems_install_path}'
+$Markers     = 'C:\ProgramData\HomeScope'
+New-Item -ItemType Directory -Force -Path $Markers, 'D:\Installers' | Out-Null
+Start-Transcript -Path "$Markers\bootstrap.log" -Append
+
+function Step($name, [scriptblock]$body) {
+  if (Test-Path "$Markers\$name.done") { Write-Host "skip $name"; return }
+  Write-Host "== $name"; & $body; New-Item -ItemType File "$Markers\$name.done" | Out-Null
+}
+
+# --- 1. Data disk as D: ------------------------------------------------------
+Step 'disk' {
+  Get-Disk | Where-Object PartitionStyle -eq 'RAW' | Select-Object -First 1 |
+    Initialize-Disk -PartitionStyle GPT -PassThru |
+    New-Partition -DriveLetter D -UseMaximumSize |
+    Format-Volume -FileSystem NTFS -NewFileSystemLabel 'OutSystems' -Confirm:$false
+}
+
+# --- 2. Windows features + prerequisites --------------------------------------
+Step 'prereqs' {
+  Install-WindowsFeature Web-Server, Web-Asp-Net45, Web-Windows-Auth, Web-Mgmt-Console,
+    Web-Dyn-Compression, Web-Http-Redirect, NET-Framework-45-Features, MSMQ, WAS -IncludeManagementTools
+  Read-S3Object -BucketName $Bucket -Key '${dotnet_hosting_key}' -File 'D:\Installers\dotnet-hosting.exe' -Region $Region
+  Start-Process 'D:\Installers\dotnet-hosting.exe' -ArgumentList '/install /quiet /norestart' -Wait
+}
+
+# --- 3. Platform Server binaries ---------------------------------------------
+Step 'platform' {
+  Read-S3Object -BucketName $Bucket -Key '${platform_installer_key}' -File 'D:\Installers\PlatformServer.exe' -Region $Region
+  Start-Process 'D:\Installers\PlatformServer.exe' -ArgumentList "/S /D=$InstallPath" -Wait
+}
+
+# --- 4. Shared farm configuration (private.key + server.hsconf) ---------------
+Step 'config' {
+  $p  = (Get-SECSecretValue -SecretId '${platform_secret_arn}' -Region $Region).SecretString | ConvertFrom-Json
+  $db = (Get-SECSecretValue -SecretId '${db_master_secret_arn}' -Region $Region).SecretString | ConvertFrom-Json
+
+  # Identical private.key on every server: encrypted settings + session tokens.
+  Set-Content -Path "$InstallPath\private.key" -Value $p.private_key -NoNewline -Encoding ascii
+
+  Read-S3Object -BucketName $Bucket -Key 'config/server.hsconf.template' -File "$Markers\server.hsconf.template" -Region $Region
+  $conf = (Get-Content "$Markers\server.hsconf.template" -Raw).
+    Replace('{{DB_HOST}}', '${db_host}').
+    Replace('{{DB_ADMIN_USER}}', $db.username).
+    Replace('{{DB_RUNTIME_USER}}', $p.runtime_user).
+    Replace('{{DB_LOG_ADMIN_USER}}', $p.log_admin_user).
+    Replace('{{DB_LOG_RUNTIME_USER}}', $p.log_runtime_user).
+    Replace('{{DB_SESSION_USER}}', $p.session_user).
+    Replace('{{CONTROLLER_HOST}}', '${controller_private_dns}').
+    Replace('{{SERVER_ROLE}}', $Role)
+  Set-Content -Path "$InstallPath\server.hsconf" -Value $conf -Encoding utf8
+
+  # Passwords are passed on the command line only, never written to disk.
+  $cfgArgs = @('/SetupInstall', $db.password, $p.runtime_password, $p.log_admin_password,
+            $p.log_runtime_password, $p.session_password)
+  if ($Role -eq 'controller') { $cfgArgs += @('/UpgradeInstall', '/CreateUpgradeCacheInvalidationService') }
+  & "$InstallPath\ConfigurationTool.com" @cfgArgs
+  if ($LASTEXITCODE -ne 0) { throw "ConfigurationTool /SetupInstall failed ($LASTEXITCODE)" }
+}
+
+# --- 5. Controller only: Service Center + System Components -------------------
+if ($Role -eq 'controller') {
+  Step 'servicecenter' {
+    & "$InstallPath\ConfigurationTool.com" /SCInstall
+    if ($LASTEXITCODE -ne 0) { throw "Service Center install failed ($LASTEXITCODE)" }
+  }
+}
+
+# --- 6. CloudWatch agent: IIS, Windows events, OutSystems services ------------
+Step 'cloudwatch' {
+  $cw = @{
+    logs = @{ logs_collected = @{
+      files = @{ collect_list = @(
+        @{ file_path = 'C:\inetpub\logs\LogFiles\W3SVC1\*.log'; log_group_name = '${log_group_prefix}/iis'; log_stream_name = '{instance_id}' },
+        @{ file_path = "$InstallPath\logs\*.log"; log_group_name = '${log_group_prefix}/platform'; log_stream_name = '{instance_id}' }
+      ) }
+      windows_events = @{ collect_list = @(
+        @{ event_name = 'Application'; event_levels = @('ERROR', 'WARNING'); log_group_name = '${log_group_prefix}/windows'; log_stream_name = '{instance_id}' }
+      ) }
+    } }
+    metrics = @{ namespace = 'HomeScope/OutSystems'; append_dimensions = @{ AutoScalingGroupName = '$${aws:AutoScalingGroupName}'; InstanceId = '$${aws:InstanceId}' }
+      metrics_collected = @{
+        Memory      = @{ measurement = @('% Committed Bytes In Use') }
+        LogicalDisk = @{ measurement = @('% Free Space'); resources = @('*') }
+        'ASP.NET Applications' = @{ measurement = @('Requests/Sec', 'Requests In Application Queue') }
+      } }
+  } | ConvertTo-Json -Depth 10
+  Set-Content 'C:\ProgramData\Amazon\AmazonCloudWatchAgent\config.json' $cw
+  & 'C:\Program Files\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1' -a fetch-config -m ec2 -s -c file:C:\ProgramData\Amazon\AmazonCloudWatchAgent\config.json
+}
+
+# --- 7. Front-end: wait for apps, then release the ASG lifecycle hook ---------
+if ($Role -eq 'frontend') {
+  $token = Invoke-RestMethod -Method PUT -Uri 'http://169.254.169.254/latest/api/token' -Headers @{ 'X-aws-ec2-metadata-token-ttl-seconds' = '300' }
+  $iid = Invoke-RestMethod -Uri 'http://169.254.169.254/latest/meta-data/instance-id' -Headers @{ 'X-aws-ec2-metadata-token' = $token }
+  # The controller pushes every published application to a newly registered
+  # front-end; poll the app until it answers before taking traffic.
+  $deadline = (Get-Date).AddMinutes(45)
+  do {
+    Start-Sleep -Seconds 30
+    try { $ok = (Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost/HomeScope/' -TimeoutSec 20).StatusCode -lt 400 } catch { $ok = $false }
+  } until ($ok -or (Get-Date) -gt $deadline)
+  $result = if ($ok) { 'CONTINUE' } else { 'ABANDON' }
+  Complete-ASLifecycleAction -AutoScalingGroupName '${asg_name}' -LifecycleHookName '${lifecycle_hook_name}' -InstanceId $iid -LifecycleActionResult $result -Region $Region
+}
+
+Stop-Transcript
+</powershell>
+<persist>false</persist>

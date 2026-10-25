@@ -1,0 +1,12 @@
+node_modules/
+test-results/
+playwright-report/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+*.tfvars.local
+.env
+.env.*

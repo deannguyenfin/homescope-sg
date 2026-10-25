@@ -1,0 +1,15 @@
+{
+  "name": "homescope-sg",
+  "private": true,
+  "description": "HomeScope SG - automated tests (data.gov.sg contract + end-to-end UI) for the OutSystems app",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test:contract": "node --test \"tests/contract/*.test.js\"",
+    "test:e2e": "playwright test",
+    "test": "npm run test:contract && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}
