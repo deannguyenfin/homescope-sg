@@ -32,13 +32,14 @@ This repository contains the delivery assets around the OutSystems modules:
 
 The modules follow the OutSystems Architecture Canvas. Full detail is in [docs/architecture.md](docs/architecture.md).
 
-![Architecture Canvas](docs/architecture-canvas.png)
+![Architecture Canvas](outsystems/architecture-canvas.png)
 
 | Layer | Module | Application | Responsibility |
 |---|---|---|---|
 | End-user | `HomeScope` (Reactive) | HomeScope | Screens, UX, client-side state |
 | Core | `Resale_CS` | HomeScope Services | Entities, incremental sync (timer), analytics, affordability, fair-value model and its nightly back-test |
 | Foundation | `DataGov_IS` | HomeScope Services | data.gov.sg REST integration, typed structures, retries, error translation |
+| Foundation | `OutSystemsUI`, `OutSystemsCharts` | Forge / platform | UI patterns and charts |
 
 **How the data gets in:**
 
@@ -53,6 +54,7 @@ The modules follow the OutSystems Architecture Canvas. Full detail is in [docs/a
 ```
 .github/workflows/   ci.yml (validate + tests), deploy.yml (Terraform + LifeTime promotion)
 docs/                architecture.md, architecture-canvas.svg/.png
+infra/                aws-architecture.svg/.png (AWS infrastructure diagram)
 infra/terraform/     root module, modules/{network,database,platform,observability}, envs/, bootstrap/
 scripts/             lifetime-deploy.mjs (LifeTime Deployment API v2)
 tests/unit/          lifetime-deploy.mjs unit tests (node:test, mocked LifeTime API)
@@ -60,7 +62,7 @@ tests/rules/         business-rule tests against the Resale_CS Rules API (node:t
 tests/contract/      data.gov.sg API contract tests (node:test)
 infra/terraform/tests/  terraform test: prod guardrails, platform and LifeTime plans
 tests/e2e/           Playwright UI tests (smoke, affordability, fair price, data exploration)
-outsystems/          exported .oml modules
+outsystems/          exported .oml modules, architecture-canvas.svg/.png
 ```
 
 ## Running the tests
@@ -102,6 +104,8 @@ The Terraform provisions **self-managed OutSystems 11 environments**: `lifetime`
 - an auto-scaling group of Windows front-ends plus a deployment controller;
 - RDS SQL Server, encrypted, with Multi-AZ in prod;
 - Secrets Manager for credentials, VPC endpoints, CloudWatch logs, alarms and a dashboard, an SNS topic for alerts, and AWS Backup.
+
+![AWS architecture](infra/aws-architecture.png)
 
 The servers bootstrap themselves with an idempotent PowerShell script that installs the Platform Server and runs `ConfigurationTool`.
 
