@@ -1,91 +1,27 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="940" viewBox="0 0 1400 940" font-family="Segoe UI, Helvetica, Arial, sans-serif">
-  <defs>
-    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#5b6475"/>
-    </marker>
-    <style>
-      .t { font-size: 15px; fill: #1f2937; }
-      .s { font-size: 13px; fill: #4b5563; }
-      .h { font-size: 17px; font-weight: 700; fill: #111827; }
-      .lay { font-size: 13px; font-weight: 700; letter-spacing: .12em; }
-      .mod { fill: #fff; stroke-width: 1.5; rx: 10; }
-      .ln { stroke: #5b6475; stroke-width: 1.6; fill: none; marker-end: url(#arr); }
-    </style>
-  </defs>
-  <rect width="1400" height="940" fill="#f8fafc"/>
-  <text x="40" y="48" font-size="26" font-weight="700" fill="#111827">HomeScope SG · OutSystems Architecture Canvas</text>
-  <text x="40" y="74" class="s">3 layers, references only point downwards. Two applications: "HomeScope" (UI) and "HomeScope Services" (Core + Foundation).</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="400" viewBox="0 0 1040 400" font-family="Inter, Segoe UI, Arial, sans-serif">
+  <rect width="1040" height="400" fill="#ffffff"/>
+  <g fill="none" stroke="#6b6b6b" stroke-width="2" stroke-dasharray="6 5">
+    <rect x="10" y="14" width="1010" height="104" rx="4"/>
+    <rect x="10" y="146" width="1010" height="104" rx="4"/>
+    <rect x="10" y="278" width="1010" height="104" rx="4"/>
+  </g>
+  <g font-size="21" fill="#6b6b6b">
+    <text x="30" y="73">End-user</text>
+    <text x="30" y="205">Core business logic</text>
+    <text x="30" y="337">Foundation</text>
+  </g>
+  <g font-size="19" fill="#222" text-anchor="middle">
+    <rect x="586" y="30" width="180" height="72" rx="3" fill="#dbeff9" stroke="#3ba3d9" stroke-width="1.5"/>
+    <text x="676" y="72">HomeScope</text>
 
-  <!-- End-user layer -->
-  <rect x="40" y="100" width="1000" height="200" rx="14" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
-  <text x="60" y="126" class="lay" fill="#4338ca">END-USER LAYER · app "HomeScope"</text>
-  <rect class="mod" x="60" y="142" width="960" height="140" stroke="#6366f1"/>
-  <text x="80" y="170" class="h">HomeScope  (Reactive Web)</text>
-  <text x="80" y="194" class="t">Explore the market:  Dashboard · Explore · Towns</text>
-  <text x="80" y="218" class="t">Decide:  <tspan font-weight="700" fill="#b45309">Fair Price Check</tspan> (verdict, offer, walk-away, COV) · Affordability (instalment, MSR 30%)</text>
-  <text x="80" y="242" class="t">Operate:  Admin (RegisteredRole) — Sync now, Full refresh, sync history</text>
-  <text x="80" y="266" class="s">OutSystems UI · OutSystems Charts · server data actions/aggregates only (no bulk data to the browser)</text>
+    <rect x="586" y="162" width="180" height="72" rx="3" fill="#fdecd9" stroke="#f0a030" stroke-width="1.5"/>
+    <text x="676" y="204">Resale_CS</text>
 
-  <!-- Core layer -->
-  <rect x="40" y="340" width="1000" height="290" rx="14" fill="#ecfdf5" stroke="#10b981" stroke-width="1.5"/>
-  <text x="60" y="366" class="lay" fill="#047857">CORE LAYER · app "HomeScope Services"</text>
-  <rect class="mod" x="60" y="382" width="960" height="230" stroke="#10b981"/>
-  <text x="80" y="410" class="h">Resale_CS  (Core Service)</text>
-  <text x="80" y="436" class="t"><tspan font-weight="600">Entities</tspan> (exposed read-only): ResaleTransaction (243.5k rows, indexed) · Town · FlatType · SyncRun · SyncStatus · ModelAccuracy</text>
-  <text x="80" y="460" class="t"><tspan font-weight="600">Sync</tspan>: SyncResaleTimer (daily 02:00, self-chaining) → SyncResale → set-based OPENJSON/MERGE upsert</text>
-  <text x="80" y="484" class="t"><tspan font-weight="600">Analytics</tspan>: GetMarketKpis · GetPriceTrend · GetTownStats · CalculateAffordability · TriggerSync · RequestFullRefresh</text>
-  <rect x="80" y="500" width="920" height="96" rx="8" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
-  <text x="96" y="524" class="t" font-weight="700" fill="#92400e">Valuation engine (BI / ML)</text>
-  <text x="96" y="546" class="s">EstimateFairPrice: weighted k-nearest-neighbour comparables (k=30, same town + flat type, 24 months), each sale time-adjusted</text>
-  <text x="96" y="564" class="s">by a monthly price-per-sqm index; weights = similarity in area, lease, storey, recency → estimate, P25–P75 range, confidence, momentum.</text>
-  <text x="96" y="582" class="s">ValuationBacktestTimer (03:00): out-of-time back-test of 300 recent sales → ModelAccuracy (median error 4.0%, 88% within 10%).</text>
-
-  <!-- Foundation layer -->
-  <rect x="40" y="670" width="1000" height="180" rx="14" fill="#fff7ed" stroke="#f97316" stroke-width="1.5"/>
-  <text x="60" y="696" class="lay" fill="#c2410c">FOUNDATION LAYER · app "HomeScope Services"</text>
-  <rect class="mod" x="60" y="712" width="960" height="120" stroke="#f97316"/>
-  <text x="80" y="740" class="h">DataGov_IS  (Integration Service)</text>
-  <text x="80" y="766" class="t">Consumed REST: data.gov.sg datastore_search · GetResalePage(Offset, Limit) with retries</text>
-  <text x="80" y="790" class="t">Structures: DatastoreResponse / Result / ResaleRecord · Exception: DataGovApiException</text>
-  <text x="80" y="814" class="s">Site properties: DataGovApiKey, ResaleResourceId, MaxRetries · no persistence (swap source = change only this module)</text>
-
-  <!-- arrows between layers -->
-  <line x1="540" y1="282" x2="540" y2="380" class="ln"/>
-  <text x="552" y="326" class="s">read-only entities, public server actions</text>
-  <line x1="540" y1="612" x2="540" y2="710" class="ln"/>
-  <text x="552" y="656" class="s">GetResalePage(Offset, Limit)</text>
-
-  <!-- External / platform column -->
-  <rect x="1080" y="100" width="280" height="200" rx="14" fill="#fff" stroke="#9ca3af" stroke-dasharray="6 4"/>
-  <text x="1100" y="128" class="lay" fill="#374151">USERS</text>
-  <text x="1100" y="156" class="t">Home buyers &amp; sellers</text>
-  <text x="1100" y="180" class="s">Is this asking price fair?</text>
-  <text x="1100" y="200" class="s">What should I offer / walk away at?</text>
-  <text x="1100" y="220" class="s">How much cash over valuation?</text>
-  <text x="1100" y="240" class="s">Buy now or wait?</text>
-  <text x="1100" y="270" class="t">Admins (sign-in)</text>
-  <line x1="1080" y1="200" x2="1022" y2="200" class="ln"/>
-
-  <rect x="1080" y="340" width="280" height="290" rx="14" fill="#fff" stroke="#9ca3af" stroke-dasharray="6 4"/>
-  <text x="1100" y="368" class="lay" fill="#374151">RUNTIME (AWS, Terraform)</text>
-  <text x="1100" y="396" class="t">WAFv2 → ALB (TLS 1.3)</text>
-  <text x="1100" y="420" class="t">Front-end ASG (Windows,</text>
-  <text x="1100" y="440" class="t">OutSystems Platform Server)</text>
-  <text x="1100" y="464" class="t">Deployment Controller</text>
-  <text x="1100" y="488" class="t">RDS SQL Server (KMS,</text>
-  <text x="1100" y="508" class="t">Multi-AZ in prod)</text>
-  <text x="1100" y="532" class="s">Secrets Manager · SSM only</text>
-  <text x="1100" y="552" class="s">CloudWatch alarms → SNS</text>
-  <text x="1100" y="572" class="s">AWS Backup · VPC endpoints</text>
-  <text x="1100" y="604" class="s">Dev demo: OutSystems Cloud PE</text>
-
-  <rect x="1080" y="670" width="280" height="180" rx="14" fill="#fff" stroke="#9ca3af" stroke-dasharray="6 4"/>
-  <text x="1100" y="698" class="lay" fill="#374151">EXTERNAL</text>
-  <text x="1100" y="726" class="t">data.gov.sg API</text>
-  <text x="1100" y="750" class="s">HDB resale flat prices</text>
-  <text x="1100" y="770" class="s">(Jan 2017 onwards)</text>
-  <text x="1100" y="800" class="s">Contract-tested daily in CI</text>
-  <line x1="1022" y1="770" x2="1078" y2="770" class="ln"/>
-
-  <text x="40" y="900" class="s">Rules: no upward or sideways references · Core owns entities and writes · Foundation holds only the API contract · UI app redeploys independently · LifeTime promotes HomeScope Services → HomeScope.</text>
+    <rect x="362" y="294" width="180" height="72" rx="3" fill="#deebe0" stroke="#4a9a5a" stroke-width="1.5"/>
+    <text x="452" y="336">DataGov_IS</text>
+    <rect x="586" y="294" width="180" height="72" rx="3" fill="#deebe0" stroke="#4a9a5a" stroke-width="1.5"/>
+    <text x="676" y="336">OutSystemsUI</text>
+    <rect x="810" y="294" width="180" height="72" rx="3" fill="#deebe0" stroke="#4a9a5a" stroke-width="1.5"/>
+    <text x="900" y="336">OutSystemsCharts</text>
+  </g>
 </svg>
