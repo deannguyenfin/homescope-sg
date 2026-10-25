@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="15" fill="#222">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+  </defs>
+  <rect width="1400" height="900" fill="#fff"/>
+  <text x="30" y="40" font-size="24" font-weight="600">HomeScope SG – self-managed OutSystems 11 on AWS (per environment: dev · test · prod)</text>
+
+  <!-- users -->
+  <rect x="40" y="90" width="150" height="56" rx="6" fill="#f2f2f2" stroke="#888"/>
+  <text x="115" y="124" text-anchor="middle">Users (HTTPS)</text>
+  <rect x="40" y="180" width="150" height="56" rx="6" fill="#f2f2f2" stroke="#888"/>
+  <text x="115" y="206" text-anchor="middle">GitHub Actions</text>
+  <text x="115" y="226" text-anchor="middle" font-size="13" fill="#555">OIDC role</text>
+
+  <!-- region -->
+  <rect x="230" y="70" width="1140" height="800" rx="6" fill="none" stroke="#147eba" stroke-width="2" stroke-dasharray="8 5"/>
+  <text x="246" y="94" fill="#147eba" font-weight="600">AWS Region ap-southeast-1</text>
+
+  <!-- edge -->
+  <rect x="260" y="110" width="200" height="56" rx="6" fill="#fde7e7" stroke="#d13212"/>
+  <text x="360" y="134" text-anchor="middle">AWS WAFv2</text>
+  <text x="360" y="153" text-anchor="middle" font-size="13" fill="#555">rate limit · OWASP · SQLi</text>
+
+  <!-- VPC -->
+  <rect x="260" y="190" width="800" height="660" rx="6" fill="none" stroke="#3f8624" stroke-width="2"/>
+  <text x="276" y="214" fill="#3f8624" font-weight="600">VPC (2–3 AZs)</text>
+
+  <!-- public subnets -->
+  <rect x="280" y="226" width="760" height="120" rx="4" fill="#eaf5e4" stroke="#7aa116"/>
+  <text x="294" y="248" fill="#3f8624">Public subnets</text>
+  <rect x="320" y="262" width="300" height="66" rx="6" fill="#fff" stroke="#8c4fff" stroke-width="1.5"/>
+  <text x="470" y="290" text-anchor="middle" font-weight="600">Application Load Balancer</text>
+  <text x="470" y="310" text-anchor="middle" font-size="13" fill="#555">TLS 1.3 · blocks /ServiceCenter /LifeTime</text>
+  <rect x="700" y="262" width="300" height="66" rx="6" fill="#fff" stroke="#8c4fff" stroke-width="1.5"/>
+  <text x="850" y="300" text-anchor="middle">NAT Gateway (one per AZ in prod)</text>
+
+  <!-- app subnets -->
+  <rect x="280" y="366" width="760" height="250" rx="4" fill="#e6f2fb" stroke="#147eba"/>
+  <text x="294" y="388" fill="#147eba">Private app subnets</text>
+  <rect x="320" y="404" width="340" height="190" rx="6" fill="#fff" stroke="#ed7100" stroke-width="1.5"/>
+  <text x="490" y="430" text-anchor="middle" font-weight="600">Front-end Auto Scaling Group</text>
+  <rect x="342" y="446" width="140" height="56" rx="4" fill="#fdf0e0" stroke="#ed7100"/>
+  <text x="412" y="472" text-anchor="middle" font-size="13">EC2 Windows 2022</text>
+  <text x="412" y="490" text-anchor="middle" font-size="13">Platform Server</text>
+  <rect x="498" y="446" width="140" height="56" rx="4" fill="#fdf0e0" stroke="#ed7100"/>
+  <text x="568" y="472" text-anchor="middle" font-size="13">EC2 Windows 2022</text>
+  <text x="568" y="490" text-anchor="middle" font-size="13">Platform Server</text>
+  <text x="490" y="530" text-anchor="middle" font-size="13" fill="#555">1–6 instances · scale on CPU</text>
+  <text x="490" y="550" text-anchor="middle" font-size="13" fill="#555">lifecycle hook: join ALB when /HomeScope/ ready</text>
+  <text x="490" y="570" text-anchor="middle" font-size="13" fill="#555">bootstrap.ps1 (user data, idempotent)</text>
+
+  <rect x="720" y="404" width="300" height="190" rx="6" fill="#fff" stroke="#ed7100" stroke-width="1.5"/>
+  <text x="870" y="430" text-anchor="middle" font-weight="600">Deployment Controller</text>
+  <rect x="770" y="446" width="200" height="56" rx="4" fill="#fdf0e0" stroke="#ed7100"/>
+  <text x="870" y="472" text-anchor="middle" font-size="13">EC2 · Service Center</text>
+  <text x="870" y="490" text-anchor="middle" font-size="13">RabbitMQ · auto-recover</text>
+  <text x="870" y="530" text-anchor="middle" font-size="13" fill="#555">controller.&lt;env&gt;.internal</text>
+  <text x="870" y="550" text-anchor="middle" font-size="13" fill="#555">ports 12000 / 5672 from front-ends</text>
+  <text x="870" y="570" text-anchor="middle" font-size="13" fill="#555">admin via SSM only (no RDP)</text>
+
+  <!-- data subnets -->
+  <rect x="280" y="636" width="760" height="196" rx="4" fill="#f3ecfb" stroke="#7b42bc"/>
+  <text x="294" y="658" fill="#7b42bc">Private data subnets</text>
+  <rect x="420" y="676" width="480" height="76" rx="6" fill="#fff" stroke="#c925d1" stroke-width="1.5"/>
+  <text x="660" y="706" text-anchor="middle" font-weight="600">Amazon RDS for SQL Server</text>
+  <text x="660" y="728" text-anchor="middle" font-size="13" fill="#555">KMS encrypted · TLS forced · Multi-AZ in prod · Performance Insights</text>
+  <rect x="300" y="770" width="720" height="46" rx="4" fill="#fff" stroke="#999" stroke-dasharray="4 3"/>
+  <text x="660" y="798" text-anchor="middle" font-size="13">VPC endpoints: S3 · SSM · SSM Messages · EC2 Messages · Secrets Manager · Logs · Monitoring</text>
+
+  <!-- managed services column -->
+  <g font-size="14">
+    <rect x="1090" y="190" width="250" height="58" rx="6" fill="#fde7e7" stroke="#d13212"/>
+    <text x="1215" y="215" text-anchor="middle" font-weight="600">Secrets Manager</text>
+    <text x="1215" y="234" text-anchor="middle" font-size="12" fill="#555">platform DB credentials</text>
+    <rect x="1090" y="266" width="250" height="58" rx="6" fill="#e9f7e9" stroke="#3f8624"/>
+    <text x="1215" y="291" text-anchor="middle" font-weight="600">S3</text>
+    <text x="1215" y="310" text-anchor="middle" font-size="12" fill="#555">installers · hsconf template · logs</text>
+    <rect x="1090" y="342" width="250" height="58" rx="6" fill="#fdeef6" stroke="#e7157b"/>
+    <text x="1215" y="367" text-anchor="middle" font-weight="600">CloudWatch</text>
+    <text x="1215" y="386" text-anchor="middle" font-size="12" fill="#555">logs · alarms · dashboard</text>
+    <rect x="1090" y="418" width="250" height="58" rx="6" fill="#fdeef6" stroke="#e7157b"/>
+    <text x="1215" y="443" text-anchor="middle" font-weight="600">SNS</text>
+    <text x="1215" y="462" text-anchor="middle" font-size="12" fill="#555">alert e-mails</text>
+    <rect x="1090" y="494" width="250" height="58" rx="6" fill="#fdeef6" stroke="#e7157b"/>
+    <text x="1215" y="519" text-anchor="middle" font-weight="600">Systems Manager</text>
+    <text x="1215" y="538" text-anchor="middle" font-size="12" fill="#555">Session Manager · release parameter</text>
+    <rect x="1090" y="570" width="250" height="58" rx="6" fill="#e9f7e9" stroke="#3f8624"/>
+    <text x="1215" y="595" text-anchor="middle" font-weight="600">AWS Backup</text>
+    <text x="1215" y="614" text-anchor="middle" font-size="12" fill="#555">daily controller + RDS</text>
+    <rect x="1090" y="646" width="250" height="58" rx="6" fill="#fde7e7" stroke="#d13212"/>
+    <text x="1215" y="671" text-anchor="middle" font-weight="600">KMS</text>
+    <text x="1215" y="690" text-anchor="middle" font-size="12" fill="#555">RDS · EBS · S3 encryption</text>
+    <rect x="1090" y="722" width="250" height="110" rx="6" fill="#f2f2f2" stroke="#888" stroke-dasharray="4 3"/>
+    <text x="1215" y="750" text-anchor="middle" font-weight="600">LifeTime environment</text>
+    <text x="1215" y="772" text-anchor="middle" font-size="12" fill="#555">own VPC · controller only</text>
+    <text x="1215" y="792" text-anchor="middle" font-size="12" fill="#555">promotes dev → test → prod</text>
+    <text x="1215" y="812" text-anchor="middle" font-size="12" fill="#555">private access only</text>
+  </g>
+
+  <!-- flows -->
+  <g stroke="#555" stroke-width="1.6" fill="none" marker-end="url(#a)">
+    <path d="M190 118 L258 132"/>
+    <path d="M360 166 L420 260"/>
+    <path d="M470 328 L490 402"/>
+    <path d="M660 499 L718 499"/>
+    <path d="M490 594 L560 674"/>
+    <path d="M870 594 L780 674"/>
+    <path d="M190 208 L228 208" stroke-dasharray="4 3"/>
+  </g>
+  <text x="490" y="360" font-size="12" fill="#555">HTTP :80 (private)</text>
+  <text x="604" y="660" font-size="12" fill="#555">SQL :1433</text>
+</svg>
